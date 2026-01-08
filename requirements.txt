@@ -1,0 +1,6 @@
+pandas
+camelot-py
+pypdf
+ghostscript
+opencv-python
+numpy
