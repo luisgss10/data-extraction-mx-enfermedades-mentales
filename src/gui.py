@@ -131,6 +131,43 @@ A01232963@tec.mx - Luis Sánchez
         if d:
             self.output_dir.set(d)
 
+    
+    def _show_csv_preview(self, csv_path: str, n_rows: int = 50):
+        import pandas as pd
+        from tkinter import ttk
+        import tkinter as tk
+
+        if not os.path.exists(csv_path):
+            messagebox.showwarning("Preview", f"No se encontró el archivo:\n{csv_path}")
+            return
+
+        df = pd.read_csv(csv_path).head(n_rows)
+
+        top = tk.Toplevel(self)
+        top.title(f"Preview: {os.path.basename(csv_path)} (primeras {len(df)} filas)")
+        top.geometry("1000x500")
+
+        frame = ttk.Frame(top)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        cols = list(df.columns)
+        tree = ttk.Treeview(frame, columns=cols, show="headings")
+        tree.pack(side="left", fill="both", expand=True)
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        vsb.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=vsb.set)
+
+        for c in cols:
+            tree.heading(c, text=c)
+            tree.column(c, width=140, anchor="w")
+
+        for _, row in df.iterrows():
+            tree.insert("", "end", values=[row[c] for c in cols])
+
+        ttk.Button(top, text="Cerrar", command=top.destroy).pack(pady=(0, 10))
+
+    
     def _log(self, msg: str):
         self.log.insert("end", msg + "\n")
         self.log.see("end")
@@ -147,6 +184,8 @@ A01232963@tec.mx - Luis Sánchez
                 self._log("\n=== Inicio ===")
                 run_pipeline(inp, out, kw, save, log_fn=self._log)
                 self._log("\n=== Fin ===")
+                output_csv = os.path.join(out, "consolidado.csv")
+                self.after(0, lambda: self._show_csv_preview(output_csv))
             except Exception as e:
                 self._log(f"\nERROR: {e}")
                 messagebox.showerror("Error", str(e))
