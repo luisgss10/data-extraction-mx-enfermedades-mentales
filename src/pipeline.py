@@ -97,11 +97,14 @@ def clean_df(df, min_numeric_cells=2):
 
 def normalize_number(x):
     if pd.isna(x):
-        return pd.NA
+        return 0
     x = str(x).strip()
-    if x in ("-", ""):
-        return pd.NA
-    return int(x.replace(" ", ""))
+    if x in ("-", "", ","):
+        return 0
+    x = x.replace(" ", "").replace(",", "")
+    if x == "":
+        return 0
+    return int(x)
 
 def reshape(df: pd.DataFrame, year: int, week: int, col_map: dict) -> pd.DataFrame:
     records = []
@@ -109,14 +112,14 @@ def reshape(df: pd.DataFrame, year: int, week: int, col_map: dict) -> pd.DataFra
         estado = row[0]
         for disease, cols in col_map.items():
             records.append({
-                "anio": year,
-                "semana": f"{week:02d}",
-                "estado": estado,
-                "enfermedad": disease,
-                "casos_semana": normalize_number(row[cols["total"]]),
-                "acumulado_hombres": normalize_number(row[cols["hombres"]]),
-                "acumulado_mujeres": normalize_number(row[cols["mujeres"]]),
-                "acumulado_anio_anterior": normalize_number(row[cols["total_prev"]]),
+                "Anio": year,
+                "Semana": f"{week:02d}",
+                "Entidad": estado,
+                "Padecimiento": disease,
+                "Casos_semana": normalize_number(row[cols["total"]]),
+                "Acumulado_hombres": normalize_number(row[cols["hombres"]]),
+                "Acumulado_mujeres": normalize_number(row[cols["mujeres"]]),
+                "Acumulado_anio_anterior": normalize_number(row[cols["total_prev"]]),
             })
     return pd.DataFrame(records)
 
