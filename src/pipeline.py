@@ -84,7 +84,7 @@ def clean_df(df, min_numeric_cells=2):
     # Normaliza celdas: quita espacios de millares y convierte "-" en vacío
     cells = df[num_cols].astype(str)
     cells = cells.replace(r"\s+", "", regex=True)
-    cells = cells.replace("-", "", regex=False)
+    cells = cells.replace("-", "0", regex=False)
 
     # Cuenta cuántas celdas son enteros válidos por fila
     is_int = cells.apply(lambda s: s.str.fullmatch(r"\d+").fillna(False))
@@ -158,7 +158,7 @@ def print_run_summary(run_log, log_fn=print):
 
 
 
-def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_fn=print):
+def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_fn=print, on_file=None):
 
     if not os.path.isdir(input_dir):
         raise ValueError("Input dir inválido.")
@@ -184,6 +184,8 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_
     run_log = []
 
     for idx, file in enumerate(pdf_files, start=1):
+        if on_file:
+            on_file(file)
         pct = (idx / total_pdfs * 100) if total_pdfs else 100.0
         pdf_path = os.path.join(input_dir, file)
 
@@ -239,69 +241,4 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_
     final_df.to_csv(output_csv, index=False)
 
     log_fn(f"Archivo final generado: {output_csv}")
-    log_fn(f"Total de filas: {len(final_df)}")
-
-def run_pipeline1(input_dir: str, output_dir: str, keywords: list[str], save_matched_pages: bool, log_fn=print):
-    if not os.path.isdir(input_dir):
-        raise ValueError("Input dir inválido.")
-    if not os.path.isdir(output_dir):
-        raise ValueError("Output dir inválido.")
-    if not keywords:
-        raise ValueError("KEYWORDS vacías.")
-
-        
-    output_csv = os.path.join(output_dir, "consolidado.csv")
-    pages_dir = os.path.join(output_dir, "matched_pages")
-    if save_matched_pages:
-        os.makedirs(pages_dir, exist_ok=True)
-
-    pdf_files = sorted(f for f in os.listdir(input_dir) if f.lower().endswith(".pdf"))
-    total = len(pdf_files)
-    log_fn(f"PDFs detectados: {total}")
-
-    col_map = build_column_map(keywords)
-
-    all_rows = []
-    page_found = 0
-
-    for idx, fname in enumerate(pdf_files, start=1):
-        log_fn(f"\n[{idx}/{total}] {fname}")
-        pdf_path = os.path.join(input_dir, fname)
-
-        page, year, week = find_page_and_week(pdf_path, keywords)
-        if page is None:
-            log_fn("  ✗ No se encontró página válida")
-            continue
-
-        page_found += 1
-        log_fn(f"  ✓ Página {page + 1} | Año {year} | Semana {week:02d}")
-
-        if save_matched_pages:
-            out_pdf = os.path.join(pages_dir, f"{os.path.splitext(fname)[0]}_p{page}.pdf")
-            extract_matched_page(pdf_path, page-1, out_pdf)
-            log_fn(f"  ✓ Página guardada: matched_pages/{os.path.basename(out_pdf)}")
-
-        tables = camelot.read_pdf(pdf_path, pages=str(page), flavor="stream")
-        if tables.n == 0:
-            log_fn("  ✗ Camelot no detectó tablas")
-            continue
-
-        best = max((t.df for t in tables), key=lambda d: d.shape[1])
-        df_clean = clean_df(best)
-        df_long = reshape(df_clean, year, week, col_map)
-        all_rows.append(df_long)
-
-        log_fn(f"  ✓ Filas base: {len(df_clean)} → Filas finales: {len(df_long)}")
-
-    log_fn("\n=== Resumen ===")
-    log_fn(f"PDFs procesados: {total}")
-    log_fn(f"PDFs con página válida: {page_found}")
-
-    if not all_rows:
-        log_fn("No se generaron datos. Archivo final no creado.")
-        return
-
-    final_df = pd.concat(all_rows, ignore_index=True)
-    final_df.to_csv(output_csv, index=False)
-    log_fn(f"\nArchivo final generado: {output_csv}")
     log_fn(f"Total de filas: {len(final_df)}")

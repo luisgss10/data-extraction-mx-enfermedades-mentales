@@ -12,8 +12,13 @@ class App(tk.Tk):
         self.title("Extractor de Datos: Boletín Epidemiológico de México")
         self.geometry("900x600")
 
-        self.input_dir = tk.StringVar(value=os.getcwd())
-        self.output_dir = tk.StringVar(value=os.getcwd())
+        self.test_mode = False
+        self.test_input_dir = "/Users/luisgss10/Documents/To be deleted/2014"
+        self.test_output_dir = "/Users/luisgss10/Documents/To be deleted/output2014"
+
+        self.input_dir = tk.StringVar(value=self.test_input_dir if self.test_mode else os.getcwd())
+        self.output_dir = tk.StringVar(value=self.test_output_dir if self.test_mode else os.getcwd())
+
         self.keywords = tk.StringVar(value="Depresión, Parkinson, Alzheimer")
         self.save_pages = tk.BooleanVar(value=True)
         self.show_preview = tk.BooleanVar(value=True)
@@ -127,12 +132,14 @@ A01232963@tec.mx - Luis Sánchez
 
 
     def _browse_input(self):
-        d = filedialog.askdirectory(initialdir=self.input_dir.get() or os.getcwd())
+        initialdir = self.test_input_dir if self.test_mode else (self.input_dir.get() or os.getcwd())
+        d = filedialog.askdirectory(initialdir=initialdir)
         if d:
             self.input_dir.set(d)
 
     def _browse_output(self):
-        d = filedialog.askdirectory(initialdir=self.output_dir.get() or os.getcwd())
+        initialdir = self.test_output_dir if self.test_mode else (self.output_dir.get() or os.getcwd())
+        d = filedialog.askdirectory(initialdir=initialdir)
         if d:
             self.output_dir.set(d)
 
@@ -178,6 +185,9 @@ A01232963@tec.mx - Luis Sánchez
         self.log.see("end")
         self.update_idletasks()
 
+    def _log_safe(self, msg: str):
+        self.after(0, lambda m=msg: self._log(m))
+
     def _run_clicked(self):
         inp = self.input_dir.get().strip()
         out = self.output_dir.get().strip()
@@ -186,16 +196,21 @@ A01232963@tec.mx - Luis Sánchez
 
         def worker():
             try:
-                self._log("\n=== Inicio ===")
-                run_pipeline(inp, out, kw, save, log_fn=self._log)
-                self._log("\n=== Fin ===")
+                self._log_safe("\n=== Inicio ===")
+                self.current_file = None
+                run_pipeline(inp, out, kw, save, log_fn=self._log_safe, on_file=lambda f: setattr(self, "current_file", f))
+                self._log_safe("\n=== Fin ===")
                 if self.show_preview.get():
                     output_csv = os.path.join(out, "consolidado.csv")
                     self.after(0, lambda: self._show_csv_preview(output_csv))
 
             except Exception as e:
-                self._log(f"\nERROR: {e}")
-                messagebox.showerror("Error", str(e))
+                import traceback
+                tb = traceback.format_exc()
+                self._log_safe(f"\nERROR ({type(e).__name__}): {e}\n{tb}")
+                fname = getattr(self, "current_file", "desconocido")
+                msg = f"⚠️ Procesamiento fallido. Archivo: {fname}\n{type(e).__name__}: {e}"
+                self.after(0, lambda msg=msg: messagebox.showerror("Error", msg))
 
         threading.Thread(target=worker, daemon=True).start()
 
