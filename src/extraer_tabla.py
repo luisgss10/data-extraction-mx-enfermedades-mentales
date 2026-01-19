@@ -32,6 +32,10 @@ SEMANA_REGEX = re.compile(
     r"Semana\s+(\d{1,2}).*?(\d{4})",
     re.IGNORECASE
 )
+SEMANA_REGEX_2 = re.compile(
+    r"semana\s+epidemiol[oó]gica\s+(\d{1,2})\s+del\s+(\d{4})",
+    re.IGNORECASE
+)
 
 # Mapeo fijo de columnas según la estructura de la tabla del PDF
 COLUMN_MAP = {
@@ -52,34 +56,57 @@ def find_page_and_week(pdf_path):
 
         # Verifica que todas las palabras clave estén presentes
         if all(k.lower() in text.lower() for k in KEYWORDS):
-            match = SEMANA_REGEX.search(text)
+            match = SEMANA_REGEX.search(text) # Opción 1: "Semana 12 2024"
             if match:
                 week, year = match.groups()
                 return i + 1, int(year), int(week)
 
-    # Si no se encuentra una página válida
+            match2 = SEMANA_REGEX_2.search(text) # Opción 2: "semana epidemiológica 42 del 2024"
+            if match2:
+                week2, year2 = match2.groups()
+                return i + 1, int(year2), int(week2) + 1
+
+            # Si encontró keywords pero no pudo sacar semana/año, dar valores de error 8888 y 99
+            return i + 1, 8888, 99
+
     return None, None, None
 
-def clean_df(df):
+def clean_df(df, min_numeric_cells=2):
     """
-    Limpia la tabla extraída por Camelot:
-    - Normaliza nombres de columnas
-    - Elimina filas vacías
-    - Quita totales y notas al pie
+    Limpia la tabla extraída por Camelot dejando solo filas que parecen "estado + datos".
+
+    Regla:
+    - Conserva filas donde la columna 0 tiene texto (nombre del estado)
+    - y donde existan al menos `min_numeric_cells` valores numéricos enteros en columnas 1..N
     """
     df = df.copy()
 
     # Renombra columnas con índices numéricos
     df.columns = range(df.shape[1])
 
-    # Elimina filas completamente vacías
-    df = df[df[0].astype(str).str.strip().ne("")]
+    # Normaliza texto en columna 0 (estado / etiquetas)
+    df[0] = df[0].astype(str).str.strip()
 
-    # Elimina filas de totales
-    df = df[~df[0].astype(str).str.contains("Total", case=False, na=False)]
+    # Elimina filas donde la primera columna está vacía
+    df = df[df[0].ne("")]
 
-    # Elimina filas de fuente o notas
-    df = df[~df[0].astype(str).str.startswith("FUENTE", na=False)]
+    # Elimina filas obvias de encabezado / pie
+    df = df[~df[0].str.match(r"^(ENTIDAD|FEDERATIVA|TOTAL|FUENTE|NOTA)$", case=False, na=False)]
+
+    # Toma todas las columnas excepto la 0 (las numéricas)
+    num_cols = [c for c in df.columns if c != 0]
+
+    # Normaliza celdas: quita espacios de millares y convierte "-" en vacío
+    cells = df[num_cols].astype(str)
+    cells = cells.replace(r"\s+", "", regex=True)
+    cells = cells.replace("-", "", regex=False)
+
+    # Cuenta cuántas celdas son enteros válidos por fila
+    is_int = cells.apply(lambda s: s.str.fullmatch(r"\d+").fillna(False))
+    numeric_count = is_int.sum(axis=1)
+
+    # Conserva solo filas con suficientes números
+    df = df[numeric_count >= min_numeric_cells]
 
     return df.reset_index(drop=True)
 
@@ -123,6 +150,43 @@ def reshape(df, year, week):
 
     return pd.DataFrame(records)
 
+def print_run_summary(run_log):
+    """
+    Imprime un resumen por PDF y calcula % de éxito.
+    Éxito = hubo match de página y la tabla limpia tuvo 32 filas.
+    """
+    headers = ["Nombre del archivo", "Anio", "Semana", "Pagina match", "Filas"]
+    rows = []
+
+    for r in run_log:
+        rows.append([
+            str(r.get("file", "")),
+            "" if r.get("year") is None else str(r.get("year")),
+            "" if r.get("week") is None else f"{int(r.get('week')):02d}",
+            "" if r.get("page") is None else str(r.get("page")),
+            "" if r.get("rows") is None else str(r.get("rows")),
+        ])
+
+    # Anchos para impresión alineada
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            widths[i] = max(widths[i], len(val))
+
+    def fmt(row):
+        return " | ".join(val.ljust(widths[i]) for i, val in enumerate(row))
+
+    print(fmt(headers))
+    print("-" * (sum(widths) + 3 * (len(headers) - 1)))
+
+    for row in rows:
+        print(fmt(row))
+
+    total = len(run_log)
+    ok = sum(1 for r in run_log if (r.get("page") is not None) and (r.get("rows") == 32))
+    pct = (ok / total * 100) if total else 0.0
+    print(f"\nExito: {ok}/{total} = {pct:.1f}% (match y 32 filas)")
+
 def main():
     """
     Función principal:
@@ -139,48 +203,54 @@ def main():
 
     print("=== Inicio ===")
     print(f"PDFs detectados: {total_pdfs}")
-
     all_rows = []
     page_found = 0
+    run_log = []
 
     for idx, file in enumerate(pdf_files, start=1):
         pct = (idx / total_pdfs * 100) if total_pdfs else 100.0
-        print(f"\n[{idx}/{total_pdfs}] {pct:5.1f}% → {file}")
-
         pdf_path = os.path.join(INPUT_DIR, file)
 
-        print("  → Buscando página del reporte")
+        # Defaults para el log
+        page, year, week = None, None, None
+        filas_base = None
+        status = "‼️"
+
         page, year, week = find_page_and_week(pdf_path)
 
+        # ‼️ No match
         if not page:
-            print("  ✗ No se encontró página válida")
+            print("  ‼️ No se encontró página válida")
+            run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
+            print(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | - | - | {status}")
             continue
 
         page_found += 1
-        print(f"  ✓ Página {page} | Año {year} | Semana {week:02d}")
 
-        print(f"  → Leyendo tabla con Camelot (página {page})")
         tables = camelot.read_pdf(pdf_path, pages=str(page), flavor="stream")
 
+        # ⚠️ Match pero sin tabla
         if tables.n == 0:
-            print("  ✗ Camelot no detectó tablas")
+            print("  ⚠️ Camelot no detectó tablas")
+            status = "⚠️"
+            run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
+            print(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | sin tabla {status} ")
             continue
 
-        # Toma la primera tabla detectada
         df_raw = tables[0].df
-
-        # Limpieza de la tabla
         df_clean = clean_df(df_raw)
-
-        # Conversión a formato largo
+        filas_base = len(df_clean)
+        status = "✅" if filas_base == 32 else "⚠️"
         df_long = reshape(df_clean, year, week)
         all_rows.append(df_long)
-
-        print(f"  ✓ Filas base: {len(df_clean)} → Filas finales: {len(df_long)}")
+        run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
+        print(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | filas={filas_base} {status}")
 
     print("\n=== Resumen ===")
     print(f"PDFs procesados: {total_pdfs}")
     print(f"PDFs con página válida: {page_found}")
+    print("\n=== Resumen por archivo ===")
+    print_run_summary(run_log)
 
     if not all_rows:
         print("No se generaron datos. Archivo final no creado.")
