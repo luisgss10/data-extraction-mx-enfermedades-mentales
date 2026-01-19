@@ -15,7 +15,8 @@ class App(tk.Tk):
         self.input_dir = tk.StringVar(value=os.getcwd())
         self.output_dir = tk.StringVar(value=os.getcwd())
         self.keywords = tk.StringVar(value="Depresión, Parkinson, Alzheimer")
-        self.save_pages = tk.BooleanVar(value=False)
+        self.save_pages = tk.BooleanVar(value=True)
+        self.show_preview = tk.BooleanVar(value=True)
 
         self._build_ui()
         self.lift()
@@ -64,12 +65,16 @@ class App(tk.Tk):
         ttk.Entry(kw_frame, textvariable=self.keywords).pack(side="left", fill="x", expand=True)
 
         ttk.Button(kw_frame, text="?", width=3, command=self._show_keywords_help).pack(side="left", padx=(6, 0))
-        #ttk.Entry(frm, textvariable=self.keywords, width=70).grid(row=2, column=1, sticky="we", padx=6, pady=(6, 0))
 
         ttk.Checkbutton(frm, text="Guardar página match", variable=self.save_pages).grid(
             row=3, column=1, sticky="w", pady=(8, 0)
         )
-        ttk.Button(frm, text="RUN", command=self._run_clicked).grid(row=3, column=2, sticky="e", pady=(8, 0))
+
+        ttk.Checkbutton(frm, text="Mostrar preview al finalizar", variable=self.show_preview).grid(
+            row=4, column=1, sticky="w", pady=(4, 0)
+        )
+
+        ttk.Button(frm, text="RUN", command=self._run_clicked).grid(row=4, column=2, sticky="e", pady=(4, 0))
 
         frm.columnconfigure(1, weight=1)
 
@@ -184,8 +189,10 @@ A01232963@tec.mx - Luis Sánchez
                 self._log("\n=== Inicio ===")
                 run_pipeline(inp, out, kw, save, log_fn=self._log)
                 self._log("\n=== Fin ===")
-                output_csv = os.path.join(out, "consolidado.csv")
-                self.after(0, lambda: self._show_csv_preview(output_csv))
+                if self.show_preview.get():
+                    output_csv = os.path.join(out, "consolidado.csv")
+                    self.after(0, lambda: self._show_csv_preview(output_csv))
+
             except Exception as e:
                 self._log(f"\nERROR: {e}")
                 messagebox.showerror("Error", str(e))
