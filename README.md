@@ -12,7 +12,6 @@ Los datos provienen de reportes oficiales de vigilancia epidemiológica (SINAVE 
   - `pipeline.py`: lógica principal (detección de página, extracción, limpieza, reshape y consolidación).
   - `gui.py`: interfaz gráfica (selección de carpetas, keywords y ejecución).
   - `extraer_tabla.py`: script original por línea de comandos (opcional / legado).
-  - `tree.py`: script para visualizar el árbol del proyecto.
 - `data/raw/` contiene los PDFs originales.
 - `data/processed/` contiene el archivo consolidado generado.
 
