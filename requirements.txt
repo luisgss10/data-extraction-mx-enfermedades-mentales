@@ -4,3 +4,4 @@ pypdf
 ghostscript
 opencv-python
 numpy
+camelot-py[cv]
