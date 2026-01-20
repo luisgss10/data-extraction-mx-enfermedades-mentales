@@ -25,8 +25,6 @@ def build_column_map(keywords: list[str], start_col: int = 1, step: int = 4):
         }
     return col_map
 
-
-
 def find_page_and_week(pdf_path, KEYWORDS):
     """
     Busca la página del PDF que contiene todas las keywords
@@ -56,6 +54,33 @@ def extract_matched_page(pdf_path: str, page_index_0: int, out_pdf_path: str):
     with open(out_pdf_path, "wb") as f:
         writer.write(f)
 
+def eliminar_columnas_vacias(df, start_state="Aguascalientes", end_state="Zacatecas"):
+    """
+    Elimina columnas que estén completamente vacías ("")  dentro del rango
+    de filas entre start_state y end_state (incluyéndolos).
+    """
+    df = df.copy()
+    df.columns = range(df.shape[1])  # columnas 0..N-1
+
+    col0 = df[0].astype(str).str.strip()
+
+    try:
+        i_start = col0[col0.eq(start_state)].index[0]
+        i_end = col0[col0.eq(end_state)].index[0]
+    except IndexError:
+        # Si no encuentra alguno, no toca nada
+        return df
+
+    if i_start > i_end:
+        i_start, i_end = i_end, i_start
+
+    sub = df.loc[i_start:i_end, :]  # solo filas Aguascalientes..Zacatecas
+
+    is_blank = sub.astype(str).apply(lambda col: col.str.strip().eq(""))  # True si vacío o espacios
+    keep_cols = is_blank.mean(axis=0) < 1.0  # conserva columnas que no son 100% vacías en ese rango
+
+    return df.loc[:, keep_cols]
+
 def clean_df(df, min_numeric_cells=2):
     """
     Limpia la tabla extraída por Camelot dejando solo filas que parecen "estado + datos".
@@ -64,36 +89,33 @@ def clean_df(df, min_numeric_cells=2):
     - Conserva filas donde la columna 0 tiene texto (nombre del estado)
     - y donde existan al menos `min_numeric_cells` valores numéricos enteros en columnas 1..N
     """
-    df = df.copy()
+    df = df.copy()  # Copia para no modificar el DataFrame original
 
-    # Renombra columnas con índices numéricos
-    df.columns = range(df.shape[1])
+    # 1) Elimina columnas completamente vacías en el intervalo Aguascalientes..Zacatecas
+    df = eliminar_columnas_vacias(df)
 
-    # Normaliza texto en columna 0 (estado / etiquetas)
-    df[0] = df[0].astype(str).str.strip()
+    # 2) Normaliza encabezados y texto de la primer columna (estado / etiquetas)
+    df.columns = range(df.shape[1])  # Renombra columnas con índices numéricos (0..N-1)
+    df[0] = df[0].astype(str).str.strip()  # Normaliza texto en columna 0 (estado / etiquetas)
 
-    # Elimina filas donde la primera columna está vacía
-    df = df[df[0].ne("")]
+    # 3) Quita filas basura
+    df = df[df[0].ne("")]  # Elimina filas donde la primera columna está vacía
+    df = df[~df[0].str.match(r"^(ENTIDAD|FEDERATIVA|TOTAL|FUENTE|NOTA)$", case=False, na=False)]  # Quita encabezados/pies obvios
 
-    # Elimina filas obvias de encabezado / pie
-    df = df[~df[0].str.match(r"^(ENTIDAD|FEDERATIVA|TOTAL|FUENTE|NOTA)$", case=False, na=False)]
+    # 4) Normaliza celdas numéricas:
+    #    - Quita espacios (ej: "1 065" -> "1065")
+    #    - Convierte "-" a "0" (tú pediste conservar guiones como ceros)
+    num_cols = [c for c in df.columns if c != 0]  # Selecciona todas las columnas numéricas (excepto la 0)
+    cells = df[num_cols].astype(str)  # Convierte a texto para normalizar
+    cells = cells.replace(r"\s+", "", regex=True)  # Quita espacios
+    cells = cells.replace("-", "0", regex=False)  # Convierte "-" a "0"
 
-    # Toma todas las columnas excepto la 0 (las numéricas)
-    num_cols = [c for c in df.columns if c != 0]
+    # 5) Conserva filas que tienen suficientes enteros válidos
+    is_int = cells.apply(lambda s: s.str.fullmatch(r"\d+").fillna(False))  # Detecta celdas que son enteros válidos
+    numeric_count = is_int.sum(axis=1)  # Cuenta cuántas celdas numéricas válidas hay por fila
+    df = df[numeric_count >= min_numeric_cells]  # Conserva solo filas con suficientes números
 
-    # Normaliza celdas: quita espacios de millares y convierte "-" en vacío
-    cells = df[num_cols].astype(str)
-    cells = cells.replace(r"\s+", "", regex=True)
-    cells = cells.replace("-", "0", regex=False)
-
-    # Cuenta cuántas celdas son enteros válidos por fila
-    is_int = cells.apply(lambda s: s.str.fullmatch(r"\d+").fillna(False))
-    numeric_count = is_int.sum(axis=1)
-
-    # Conserva solo filas con suficientes números
-    df = df[numeric_count >= min_numeric_cells]
-
-    return df.reset_index(drop=True)
+    return df.reset_index(drop=True)  # Resetea índice para dejarlo limpio
 
 def normalize_number(x):
     if pd.isna(x):
@@ -121,6 +143,27 @@ def reshape(df: pd.DataFrame, year: int, week: int, col_map: dict) -> pd.DataFra
                 "Acumulado_mujeres": normalize_number(row[cols["mujeres"]]),
                 "Acumulado_anio_anterior": normalize_number(row[cols["total_prev"]]),
             })
+    return pd.DataFrame(records)
+
+def reshape_wide(df: pd.DataFrame, year: int, week: int, col_map: dict) -> pd.DataFrame:
+    """
+    Devuelve un DF "ancho":
+    1 fila por entidad y 4 columnas por keyword (semana, hombres, mujeres, año anterior).
+    """
+    records = []
+    for _, row in df.iterrows():
+        estado = row[0]
+        rec = {
+            "Anio": year,
+            "Semana": f"{week:02d}",
+            "Entidad": estado,
+        }
+        for kw, cols in col_map.items():
+            rec[f"Casos_semana_{kw}"] = normalize_number(row[cols["total"]])
+            rec[f"Acumulado_hombres_{kw}"] = normalize_number(row[cols["hombres"]])
+            rec[f"Acumulado_mujeres_{kw}"] = normalize_number(row[cols["mujeres"]])
+            rec[f"Acumulado_anio_anterior_{kw}"] = normalize_number(row[cols["total_prev"]])
+        records.append(rec)
     return pd.DataFrame(records)
 
 def print_run_summary(run_log, log_fn=print):
@@ -155,17 +198,16 @@ def print_run_summary(run_log, log_fn=print):
     pct = (ok / total * 100) if total else 0.0
     log_fn(f"\nExito: {ok}/{total} = {pct:.1f}% (match y 32 filas)")
 
-
-
-
 def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_fn=print, on_file=None):
-
     if not os.path.isdir(input_dir):
         raise ValueError("Input dir inválido.")
     if not os.path.isdir(output_dir):
         raise ValueError("Output dir inválido.")
     if not keywords:
         raise ValueError("KEYWORDS vacías.")
+
+    # La GUI puede mandar un output_dir por defecto (<input>/output). Si no existe, lo creamos.
+    os.makedirs(output_dir, exist_ok=True)
 
     output_csv = os.path.join(output_dir, "consolidado.csv")
     pages_dir = os.path.join(output_dir, "matched_pages")
@@ -182,50 +224,66 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_
     all_rows = []
     page_found = 0
     run_log = []
+    failed_files=[]
 
     for idx, file in enumerate(pdf_files, start=1):
         if on_file:
             on_file(file)
         pct = (idx / total_pdfs * 100) if total_pdfs else 100.0
         pdf_path = os.path.join(input_dir, file)
+        try: 
+            page, year, week = find_page_and_week(pdf_path, keywords)
+            filas_base = None
+            status = "‼️"
 
-        page, year, week = None, None, None
-        filas_base = None
-        status = "‼️"
+            if not page:
+                log_fn("  ‼️ No se encontró página válida")
+                run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
+                log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | - | - | {status}")
+                continue
 
-        page, year, week = find_page_and_week(pdf_path, keywords)
+            page_found += 1
 
-        if not page:
-            log_fn("  ‼️ No se encontró página válida")
+            if save_matched_pages:
+                out_pdf = os.path.join(pages_dir, f"{os.path.splitext(file)[0]}_p{page}.pdf")
+                extract_matched_page(pdf_path, page - 1, out_pdf)
+
+            tables = camelot.read_pdf(pdf_path, pages=str(page), flavor="stream")
+
+            if tables.n == 0:
+                log_fn("  ⚠️ Camelot no detectó tablas")
+                status = "⚠️"
+                run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
+                log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | sin tabla {status} ")
+                continue
+
+            df_raw = tables[0].df
+            df_clean = clean_df(df_raw)
+            filas_base = len(df_clean)
+            status = "✅" if filas_base == 32 else "⚠️"
+
+            # Nuevo: dumpear CSV ancho por página match con nombre {anio}_W{semana:02d}_P{page}.csv
+            wide_df = reshape_wide(df_clean, year, week, col_map)
+            per_page_csv = os.path.join(output_dir, f"{year}_W{week:02d}_P{page}.csv")
+            wide_df.to_csv(per_page_csv, index=False)
+
+            # Consolidado largo (igual que antes)
+            df_long = reshape(df_clean, year, week, col_map)
+            all_rows.append(df_long)
+
             run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
-            log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | - | - | {status}")
+            log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | filas={filas_base} {status}")
+
+        except Exception as e:  # NUEVO: atrapa todo lo que reviente dentro del loop
+            failed_files.append(file)
+            run_log.append({"file": file, "year": None, "week": None, "page": None, "rows": None})
+            log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | ERROR ({type(e).__name__}): {e}")
             continue
 
-        page_found += 1
-
-        if save_matched_pages:
-            out_pdf = os.path.join(pages_dir, f"{os.path.splitext(file)[0]}_p{page}.pdf")
-            extract_matched_page(pdf_path, page - 1, out_pdf)
-
-        tables = camelot.read_pdf(pdf_path, pages=str(page), flavor="stream")
-
-        if tables.n == 0:
-            log_fn("  ⚠️ Camelot no detectó tablas")
-            status = "⚠️"
-            run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
-            log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | sin tabla {status} ")
-            continue
-
-        df_raw = tables[0].df
-        df_clean = clean_df(df_raw)
-        filas_base = len(df_clean)
-        status = "✅" if filas_base == 32 else "⚠️"
-
-        df_long = reshape(df_clean, year, week, col_map)
-        all_rows.append(df_long)
-        run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
-
-        log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | filas={filas_base} {status}")
+    failed_txt = os.path.join(output_dir, "failed_files.txt")
+    with open(failed_txt, "w", encoding="utf-8") as f:
+        for name in failed_files:
+            f.write(name + "\n")
 
     log_fn("\n=== Resumen ===")
     log_fn(f"PDFs procesados: {total_pdfs}")
