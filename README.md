@@ -6,6 +6,12 @@ El script localiza automáticamente la página relevante en cada PDF, extrae la 
 
 Los datos provienen de reportes oficiales de vigilancia epidemiológica (SINAVE / Secretaría de Salud) publicados en PDF.
 
+## 💼 Clonar repositorio
+```bash
+git clone https://github.com/luisgss10/data-extraction-mx-enfermedades-mentales.git 
+cd data-extraction-mx-enfermedades-mentales/
+```
+
 ## 📂 Estructura del proyecto
 
 - `src/` contiene el código del proyecto:
