@@ -21,6 +21,7 @@ class App(tk.Tk):
 
         self.keywords = tk.StringVar(value="Depresión, Parkinson, Alzheimer")
         self.save_pages = tk.BooleanVar(value=True)
+        self.save_individual_tables = tk.BooleanVar(value=True)
         self.show_preview = tk.BooleanVar(value=True)
 
         self._build_ui()
@@ -75,11 +76,15 @@ class App(tk.Tk):
             row=3, column=1, sticky="w", pady=(8, 0)
         )
 
-        ttk.Checkbutton(frm, text="Mostrar preview al finalizar", variable=self.show_preview).grid(
+        ttk.Checkbutton(frm, text="Guardar CSV individuales", variable=self.save_individual_tables).grid(
             row=4, column=1, sticky="w", pady=(4, 0)
         )
 
-        ttk.Button(frm, text="RUN", command=self._run_clicked).grid(row=4, column=2, sticky="e", pady=(4, 0))
+        ttk.Checkbutton(frm, text="Mostrar preview al finalizar", variable=self.show_preview).grid(
+            row=5, column=1, sticky="w", pady=(4, 0)
+        )
+
+        ttk.Button(frm, text="RUN", command=self._run_clicked).grid(row=5, column=2, sticky="e", pady=(4, 0))
 
         frm.columnconfigure(1, weight=1)
 
@@ -192,16 +197,23 @@ A01232963@tec.mx - Luis Sánchez
         inp = self.input_dir.get().strip()
         out = self.output_dir.get().strip()
         kw = [k.strip() for k in self.keywords.get().split(",") if k.strip()]
-        save = bool(self.save_pages.get())
+        save_pages = bool(self.save_pages.get())
+        save_tables = bool(self.save_individual_tables.get())
 
         def worker():
             try:
                 self._log_safe("\n=== Inicio ===")
                 self.current_file = None
-                run_pipeline(inp, out, kw, save, log_fn=self._log_safe, on_file=lambda f: setattr(self, "current_file", f))
+                run_pipeline(
+                    inp, out, kw,
+                    save_matched_pages=save_pages,
+                    save_individual_tables=save_tables,
+                    log_fn=self._log_safe,
+                    on_file=lambda f: setattr(self, "current_file", f),
+                )
                 self._log_safe("\n=== Fin ===")
                 if self.show_preview.get():
-                    output_csv = os.path.join(out, "consolidado.csv")
+                    output_csv = os.path.join(out, "dataset_boletin_epidemiologico.csv")
                     self.after(0, lambda: self._show_csv_preview(output_csv))
 
             except Exception as e:
