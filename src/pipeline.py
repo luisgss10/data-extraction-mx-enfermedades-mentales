@@ -198,7 +198,7 @@ def print_run_summary(run_log, log_fn=print):
     pct = (ok / total * 100) if total else 0.0
     log_fn(f"\nExito: {ok}/{total} = {pct:.1f}% (match y 32 filas)")
 
-def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_fn=print, on_file=None):
+def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, save_individual_tables=False, log_fn=print, on_file=None):
     if not os.path.isdir(input_dir):
         raise ValueError("Input dir inválido.")
     if not os.path.isdir(output_dir):
@@ -206,13 +206,17 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_
     if not keywords:
         raise ValueError("KEYWORDS vacías.")
 
-    # La GUI puede mandar un output_dir por defecto (<input>/output). Si no existe, lo creamos.
     os.makedirs(output_dir, exist_ok=True)
 
-    output_csv = os.path.join(output_dir, "consolidado.csv")
-    pages_dir = os.path.join(output_dir, "matched_pages")
+    output_csv = os.path.join(output_dir, "dataset_boletin_epidemiologico.csv")
+    pages_dir = os.path.join(output_dir, "pdf_matched_pages")
+    tablas_dir = os.path.join(output_dir, "csv_tablas_individuales")
+
     if save_matched_pages:
         os.makedirs(pages_dir, exist_ok=True)
+
+    if save_individual_tables:
+        os.makedirs(tablas_dir, exist_ok=True)
 
     pdf_files = sorted(f for f in os.listdir(input_dir) if f.lower().endswith(".pdf"))
     total_pdfs = len(pdf_files)
@@ -262,28 +266,28 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, log_
             filas_base = len(df_clean)
             status = "✅" if filas_base == 32 else "⚠️"
 
-            # Nuevo: dumpear CSV ancho por página match con nombre {anio}_W{semana:02d}_P{page}.csv
-            wide_df = reshape_wide(df_clean, year, week, col_map)
-            per_page_csv = os.path.join(output_dir, f"{year}_W{week:02d}_P{page}.csv")
-            wide_df.to_csv(per_page_csv, index=False)
+            if save_individual_tables:
+                wide_df = reshape_wide(df_clean, year, week, col_map)
+                per_page_csv = os.path.join(tablas_dir, f"{year}_W{week:02d}_P{page}.csv")
+                wide_df.to_csv(per_page_csv, index=False)
 
-            # Consolidado largo (igual que antes)
             df_long = reshape(df_clean, year, week, col_map)
             all_rows.append(df_long)
 
             run_log.append({"file": file, "year": year, "week": week, "page": page, "rows": filas_base})
             log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | p{page} | {year} W{week:02d} | filas={filas_base} {status}")
 
-        except Exception as e:  # NUEVO: atrapa todo lo que reviente dentro del loop
+        except Exception as e:
             failed_files.append(file)
             run_log.append({"file": file, "year": None, "week": None, "page": None, "rows": None})
             log_fn(f"{idx:>3}/{total_pdfs:<3} | {pct:>6.1f}% | {file} | ERROR ({type(e).__name__}): {e}")
             continue
 
-    failed_txt = os.path.join(output_dir, "failed_files.txt")
-    with open(failed_txt, "w", encoding="utf-8") as f:
-        for name in failed_files:
-            f.write(name + "\n")
+    if failed_files:
+        failed_txt = os.path.join(output_dir, "failed_files.txt")
+        with open(failed_txt, "w", encoding="utf-8") as f:
+            for name in failed_files:
+                f.write(name + "\n")
 
     log_fn("\n=== Resumen ===")
     log_fn(f"PDFs procesados: {total_pdfs}")
