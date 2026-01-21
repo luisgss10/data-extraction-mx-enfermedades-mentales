@@ -38,12 +38,18 @@ class App(tk.Tk):
         txt = tk.Text(top, wrap="word")
         txt.pack(fill="both", expand=True, padx=10, pady=10)
         texto_ayuda="""KEYWORDS
+
+        NOTA: Esta función se encuentra deshabilitada por desarrollo.
+        De momento disponible solamente para Depresión, Parkinson, Alzheimer.
+
+
 - Escribe las enfermedades a buscar dentro del PDF.
 - Se usan para encontrar la página donde está la tabla.
 - Separa cada una con coma.
 - Deben ir en el mismo orden en que aparecen en la tabla del boletín.
 - Agrega solamente las 2 o 3 enfermedades, tal cual están en el encabezado de la tabla deseada.
 - Ejemplo: Depresión, Parkinson, Alzheimer)."""
+
         txt.insert("1.0", texto_ayuda)
         txt.config(state="disabled")
 
@@ -68,7 +74,7 @@ class App(tk.Tk):
         kw_frame = ttk.Frame(frm)
         kw_frame.grid(row=2, column=1, sticky="we", padx=6, pady=(6, 0))
 
-        ttk.Entry(kw_frame, textvariable=self.keywords).pack(side="left", fill="x", expand=True)
+        ttk.Entry(kw_frame, textvariable=self.keywords, state="disabled").pack(side="left", fill="x", expand=True)
 
         ttk.Button(kw_frame, text="?", width=3, command=self._show_keywords_help).pack(side="left", padx=(6, 0))
 
@@ -94,21 +100,27 @@ class App(tk.Tk):
 Extractor de tablas: Boletín Epidemiológico (México)
 ============================================================
 
-Este programa procesa boletines en PDF y genera un CSV consolidado listo para análisis.
-El boletín es actualizado semanalmente por el Sistema Nacional de Vigilancia Epidemiológica (SINAVE).
+Este programa procesa boletines en PDF y genera:
+1) Un CSV consolidado listo para análisis.
+2) Páginas individuales en PDF de la tabla seleccionada. 
+3) Tablas (csv) individuales por PDF de la tabla seleccionada.
+
+El boletín se actualiza semanalmente por el Sistema Nacional de Vigilancia Epidemiológica (SINAVE).
 Link: https://www.gob.mx/salud/acciones-y-programas/direccion-general-de-epidemiologia-boletin-epidemiologico
 
 Pasos:
 1) Selecciona la carpeta con los PDFs (entrada).
 2) Selecciona la carpeta donde se guardarán los resultados (salida).
-3) Escribe las KEYWORDS separadas por coma (ej. Depresión, Parkinson, Alzheimer).
-   Nota: estas KEYWORDS definen las enfermedades a extraer.
-4) (Opcional) Activa “Guardar página match” para guardar la página donde se encontró la tabla.
-5) Presiona RUN.
+3) Escribe los padecimientos (KEYWORDS) de la tabla a extraer, separadas por coma (ej. Depresión, Parkinson, Alzheimer).
+   Nota: Optimizado para Depresión, Parkinson y Alzheimer. Procesamiento de otras tablas aún en desarrollo.
+4) (Opcional) Activa “Guardar CSVs individuales” para guardar un CSV por cada PDF procesado.
+5) (Opcional) Activa “Guardar página match” para guardar la(s) página(s) donde se encontró la tabla.
+6) Presiona RUN.
 
 Salida:
-- consolidado.csv
-- matched_pages/ (si activas la opción)
+- dataset_boletin_epidemiologico.csv
+- csv_tablas_individuales/ (si activas “Guardar CSVs individuales”)
+- pdf_matched_pages/ (si activas “Guardar página match”)
 """
 
         self._log(texto_bienvenida)
@@ -117,7 +129,7 @@ Salida:
         texto_acercade="""
 Acerca de:
 Extractor de tablas - Boletín Epidemiológico SINAVE
-Versión: 0.0.1
+Versión: 1.0.0
 
 Este proyecto fue realizado académicamente en colaboración del Tecnológico de Monterrey y el IMSS como parte del curso de Proyecto Integrador de la Maestría en Inteligencia Artificial Aplicada (MNA), periodo Enero-Abril, 2026.
 
