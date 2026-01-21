@@ -81,6 +81,33 @@ def eliminar_columnas_vacias(df, start_state="Aguascalientes", end_state="Zacate
 
     return df.loc[:, keep_cols]
 
+def pad_prev_year_cols(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
+    """
+    Si df viene SIN 'año anterior' (1 + 3*k columnas),
+    lo convierte al esquema CON 'año anterior' (1 + 4*k columnas),
+    poniendo pd.NA en la columna faltante de cada padecimiento.
+    """
+    df = df.copy()
+    k = len(keywords)
+    no_prev = 1 + 3 * k
+    with_prev = 1 + 4 * k
+
+    if df.shape[1] != no_prev:
+        return df  # ya trae año anterior, o viene raro (lo manejas aparte)
+
+    out = {}
+    out[0] = df[0]  # Entidad
+
+    for i, kw in enumerate(keywords):
+        old_base = 1 + i * 3
+        new_base = 1 + i * 4
+        out[new_base + 0] = df[old_base + 0]  # total semana
+        out[new_base + 1] = df[old_base + 1]  # hombres
+        out[new_base + 2] = df[old_base + 2]  # mujeres
+        out[new_base + 3] = pd.NA            # año anterior (faltante)
+
+    return pd.DataFrame(out)
+
 def clean_df(df, min_numeric_cells=2):
     """
     Limpia la tabla extraída por Camelot dejando solo filas que parecen "estado + datos".
@@ -89,44 +116,52 @@ def clean_df(df, min_numeric_cells=2):
     - Conserva filas donde la columna 0 tiene texto (nombre del estado)
     - y donde existan al menos `min_numeric_cells` valores numéricos enteros en columnas 1..N
     """
-    df = df.copy()  # Copia para no modificar el DataFrame original
-
     # 1) Elimina columnas completamente vacías en el intervalo Aguascalientes..Zacatecas
     df = eliminar_columnas_vacias(df)
 
-    # 2) Normaliza encabezados y texto de la primer columna (estado / etiquetas)
-    df.columns = range(df.shape[1])  # Renombra columnas con índices numéricos (0..N-1)
-    df[0] = df[0].astype(str).str.strip()  # Normaliza texto en columna 0 (estado / etiquetas)
+    # 2) Normaliza primera columna (estado)
+    df.columns = range(df.shape[1])
+    df[0] = df[0].astype(str).str.strip()
 
     # 3) Quita filas basura
-    df = df[df[0].ne("")]  # Elimina filas donde la primera columna está vacía
-    df = df[~df[0].str.match(r"^(ENTIDAD|FEDERATIVA|TOTAL|FUENTE|NOTA)$", case=False, na=False)]  # Quita encabezados/pies obvios
+    df = df[df[0].ne("")]
+    df = df[~df[0].str.match(r"^(ENTIDAD|FEDERATIVA|TOTAL.*|FUENTE.*|NOTA.*)$", case=False, na=False)]
 
-    # 4) Normaliza celdas numéricas:
-    #    - Quita espacios (ej: "1 065" -> "1065")
-    #    - Convierte "-" a "0" (tú pediste conservar guiones como ceros)
-    num_cols = [c for c in df.columns if c != 0]  # Selecciona todas las columnas numéricas (excepto la 0)
-    cells = df[num_cols].astype(str)  # Convierte a texto para normalizar
-    cells = cells.replace(r"\s+", "", regex=True)  # Quita espacios
-    cells = cells.replace("-", "0", regex=False)  # Convierte "-" a "0"
+    # 4) Normaliza celdas numéricas SOLO para validar filas (no conviertas todo a 0 aquí)
+    num_cols = [c for c in df.columns if c != 0]
+    cells = df[num_cols].astype(str).apply(lambda col: col.str.strip())
 
-    # 5) Conserva filas que tienen suficientes enteros válidos
-    is_int = cells.apply(lambda s: s.str.fullmatch(r"\d+").fillna(False))  # Detecta celdas que son enteros válidos
-    numeric_count = is_int.sum(axis=1)  # Cuenta cuántas celdas numéricas válidas hay por fila
-    df = df[numeric_count >= min_numeric_cells]  # Conserva solo filas con suficientes números
+    # limpia miles para conteo: "1 450" / "1,450" -> "1450"
+    cells_clean = cells.replace(r"[ ,]", "", regex=True)
 
-    return df.reset_index(drop=True)  # Resetea índice para dejarlo limpio
+    # para el conteo, "-" y "" cuentan como numéricos (porque serán 0)
+    is_zeroish = cells.apply(lambda col: col.eq("-") | col.eq(""))
+    is_int = cells_clean.apply(lambda col: col.str.fullmatch(r"\d+").fillna(False))
+
+    numeric_like = (is_int | is_zeroish)
+    numeric_count = numeric_like.sum(axis=1)
+
+    df = df[numeric_count >= min_numeric_cells]
+
+    return df.reset_index(drop=True)
 
 def normalize_number(x):
     if pd.isna(x):
+        return pd.NA
+
+    s = str(x).strip()
+    if s == "" or s == "-":
         return 0
-    x = str(x).strip()
-    if x in ("-", "", ","):
-        return 0
-    x = x.replace(" ", "").replace(",", "")
-    if x == "":
-        return 0
-    return int(x)
+
+    # quita separadores de miles: espacios y comas
+    s2 = s.replace(" ", "").replace(",", "")
+
+    # si queda número entero válido, regresa int
+    if re.fullmatch(r"\d+", s2):
+        return int(s2)
+
+    # cualquier otra cosa (n.e., texto, etc.) => NA
+    return pd.NA
 
 def reshape(df: pd.DataFrame, year: int, week: int, col_map: dict) -> pd.DataFrame:
     records = []
@@ -263,6 +298,7 @@ def run_pipeline(input_dir, output_dir, keywords, save_matched_pages=False, save
 
             df_raw = tables[0].df
             df_clean = clean_df(df_raw)
+            df_clean = pad_prev_year_cols(df_clean, keywords)
             filas_base = len(df_clean)
             status = "✅" if filas_base == 32 else "⚠️"
 
